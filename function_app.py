@@ -173,12 +173,11 @@ The signature appears in section {section_display} on page {page}.
 Your task is to determine the *visible ink color* used in the signature. Focus on actual color hues in the image—do not guess or infer contextually.
 
 You must choose only one of the following options:
-- "blue" (includes all visible shades of blue ink), including navy blue, light blue, etc.,
-- "black" (grayscale or neutral dark strokes),
-- "red",
-- "other" (used if the ink is faint, indistinguishable, or another color).
-
-If the image is blank or the signature is too faint to analyze, return "other".
+- "blue"
+- "black"
+- "red"
+- "other"
+You must label each image into one of these categories. If you are not sure, pick the closest color. If it's in between blue and other color, pick blue
 
 Return your answer strictly in this JSON format:
 {{"color_detected": "<color>"}}
