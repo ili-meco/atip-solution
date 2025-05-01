@@ -13,6 +13,8 @@ from datetime import datetime
 import uuid
 import re
 import os
+from PIL import Image
+import io
 
 app = func.FunctionApp()
 
@@ -37,38 +39,185 @@ def calculate_age(dob: str) -> Optional[int]:
         logging.warning(f"Invalid DOB format for {dob}: {str(e)}")
         return None
 
-def extract_signature_image(pdf_data: bytes, page_num: int, bounding_box: list, field_name: str) -> Optional[str]:
-    """Extract a signature image from a PDF using PyMuPDF."""
+def extract_signature_image(pdf_data: bytes, page_num: int, bounding_box: list, field_name: str, blob_service_client: BlobServiceClient, blob_name: str) -> Optional[Dict]:
+    """Extract a signature image from a PDF using PyMuPDF, resize it, and save to form-signatures."""
     try:
-        # Validate bounding_box: must be a list of at least 8 floats (quadrilateral)
-        if not isinstance(bounding_box, list) or len(bounding_box) < 8 or not all(isinstance(x, float) for x in bounding_box):
-            logging.warning(f"Invalid bounding box for field '{field_name}' on page {page_num}: {bounding_box}. Skipping image extraction.")
-            return None
-
-        # Validate that coordinates are paired (x, y)
-        coordinates = [(bounding_box[i], bounding_box[i+1]) for i in range(0, len(bounding_box), 2)]
-        if len(coordinates) < 4:
-            logging.warning(f"Insufficient coordinate pairs for field '{field_name}' on page {page_num}: {coordinates}. Skipping image extraction.")
-            return None
-
+        # Open the PDF document
         pdf_document = fitz.open(stream=pdf_data, filetype="pdf")
-        page = pdf_document[page_num - 1]
+        page = pdf_document[page_num - 1]  # Page numbers are 1-based from DI, 0-based in PyMuPDF
+        page_rect = page.rect  # Page dimensions in points (1 inch = 72 points)
+        logging.info(f"Page {page_num} dimensions: {page_rect}")
+
+        # Initialize flag to determine if fallback region should be used
+        use_fallback = False
+
+        # Validate bounding box: must be a list of at least 8 floats representing 4 (x, y) coordinates
+        if not isinstance(bounding_box, list) or len(bounding_box) < 8 or not all(isinstance(x, (int, float)) for x in bounding_box):
+            logging.warning(f"Invalid bounding box for field '{field_name}' on page {page_num}: {bounding_box}. Using fallback region.")
+            use_fallback = True
+        else:
+            # Convert DI bounding box (in inches) to points (1 inch = 72 points)
+            coordinates = [(bounding_box[i], bounding_box[i+1]) for i in range(0, len(bounding_box), 2)]
+            coordinates_points = [(x * 72, y * 72) for x, y in coordinates]
+            x0 = min(p[0] for p in coordinates_points)
+            y0 = min(p[1] for p in coordinates_points)
+            x1 = max(p[0] for p in coordinates_points)
+            y1 = max(p[1] for p in coordinates_points)
+
+            # Validate bounding box
+            if x0 >= x1 or y0 >= y1:
+                logging.warning(f"Invalid bounding box dimensions for field '{field_name}' on page {page_num}: x0={x0}, x1={x1}, y0={y0}, y1={y1}. Using fallback region.")
+                use_fallback = True
+            elif x0 < 0 or y0 < 0 or x1 > page_rect.width or y1 > page_rect.height:
+                logging.warning(f"Bounding box outside page bounds for field '{field_name}' on page {page_num}: ({x0}, {y0}, {x1}, {y1}). Using fallback region.")
+                use_fallback = True
+            elif x0 < 36 and y0 < 36:  # Top-left corner (within 0.5 inches = 36 points)
+                logging.warning(f"Bounding box in top-left corner for field '{field_name}' on page {page_num}: ({x0}, {y0}). Using fallback region.")
+                use_fallback = True
+
+        # Define the extraction rectangle
+        if use_fallback:
+            # Fallback region: bottom 10% of the page (lowered as requested)
+            page_width = page_rect.width
+            page_height = page_rect.height
+            x_start = 36  # 0.5-inch margin from left (36 points)
+            x_end = page_width - 36  # 0.5-inch margin from right
+            y_start = page_height * 0.90  # Start at 90% down the page
+            y_end = page_height - 36  # 0.5-inch margin from bottom
+            rect = fitz.Rect(x_start, y_start, x_end, y_end)
+            logging.info(f"Fallback region for field '{field_name}' on page {page_num}: {rect}")
+        else:
+            # Use the provided bounding box (already converted to points)
+            rect = fitz.Rect(x0, y0, x1, y1)
+            logging.info(f"Using provided bounding box for field '{field_name}' on page {page_num}: {rect}")
+
+        # Add padding (20 points) to capture the full signature
+        pad = 20
         rect = fitz.Rect(
-            min(p[0] for p in coordinates),
-            min(p[1] for p in coordinates),
-            max(p[0] for p in coordinates),
-            max(p[1] for p in coordinates)
+            max(page_rect.x0, rect.x0 - pad),
+            max(page_rect.y0, rect.y0 - pad),
+            min(page_rect.x1, rect.x1 + pad),
+            min(page_rect.y1, rect.y1 + pad)
         )
-        # Increase resolution to 600 DPI for better image clarity
-        pix = page.get_pixmap(matrix=fitz.Matrix(600/72, 600/72), clip=rect)
+        logging.info(f"Padded rectangle for field '{field_name}' on page {page_num}: {rect}")
+
+        # Render the page at 150 DPI
+        dpi = 150
+        matrix = fitz.Matrix(dpi/72, dpi/72)  # Scale factor for rendering
+        pix = page.get_pixmap(matrix=matrix, clip=rect)
         img_bytes = pix.tobytes("png")
-        img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-        logging.info(f"Extracted signature image for field '{field_name}' on page {page_num}. Image size: {len(img_bytes)} bytes")
+        logging.info(f"Rendered pixmap for field '{field_name}' on page {page_num}: width={pix.width}, height={pix.height}")
+
+        # Resize the image to a maximum dimension of 512 pixels while preserving aspect ratio
+        img = Image.open(io.BytesIO(img_bytes))
+        max_size = 512
+        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+        output = io.BytesIO()
+        img.save(output, format="PNG")
+        img_bytes_resized = output.getvalue()
+
+        # Encode to base64
+        img_base64 = base64.b64encode(img_bytes_resized).decode("utf-8")
+        base64_length = len(img_base64)
+        estimated_tokens = base64_length // 4  # Rough estimate: ~1 token per 4 characters
+        logging.info(f"Image for field '{field_name}' on page {page_num}: base64 length={base64_length}, estimated tokens={estimated_tokens}")
+
+        # Determine the section for the filename
+        if "2. Applicant's Information" in field_name:
+            section = "applicant"
+        elif "Related Individual's Information" in field_name:
+            section = field_name.split(" ")[0].replace(".", "_") + "_related_individual"
+        else:
+            section = "unknown"
+
+        # Save the PNG to form-signatures
+        signature_blob_name = f"{blob_name.replace('form-pdfs/', '').replace('.pdf', '')}_{section}_page{page_num}.png"
+        blob_client = blob_service_client.get_blob_client(container="form-signatures", blob=signature_blob_name)
+        blob_client.upload_blob(img_bytes_resized, overwrite=True)
+        logging.info(f"Saved signature image to form-signatures/{signature_blob_name}")
+
+        # Close the PDF document
         pdf_document.close()
-        return img_base64
+        return {"image": img_base64, "section": section}
+
     except Exception as e:
         logging.error(f"Failed to extract signature image for field '{field_name}' on page {page_num}: {str(e)}")
+        if 'pdf_document' in locals():
+            pdf_document.close()
         return None
+
+def detect_ink_color_with_gpt4o(client: AzureOpenAI, signature_images: List[Dict]) -> List[Dict]:
+    """Use GPT-4o to detect the ink color of signatures in the provided images."""
+    signatures_with_colors = []
+    
+    for sig in signature_images:
+        section = sig["section"]
+        page = sig["page"]
+        img_base64 = sig["image"]
+
+        # Map the section to the correct form section name for the prompt
+        if section == "applicant":
+            section_display = "2. Applicant's Information"
+        elif "related_individual" in section:
+            section_num = section.split("_")[0]
+            section_display = f"{section_num} Related Individual’s Information"
+        else:
+            section_display = section
+
+        # Prompt explicitly mentioning "json format"
+        prompt = f"""
+You are analyzing a PNG image of a handwritten signature from an IMM 5744 E consent form.
+
+The signature appears in section {section_display} on page {page}.
+
+Your task is to determine the *visible ink color* used in the signature. Focus on actual color hues in the image—do not guess or infer contextually.
+
+You must choose only one of the following options:
+- "blue" (includes all visible shades of blue ink), including navy blue, light blue, etc.,
+- "black" (grayscale or neutral dark strokes),
+- "red",
+- "other" (used if the ink is faint, indistinguishable, or another color).
+
+If the image is blank or the signature is too faint to analyze, return "other".
+
+Return your answer strictly in this JSON format:
+{{"color_detected": "<color>"}}
+
+**Image (base64-encoded PNG):**
+![Signature](data:image/png;base64,{img_base64})
+"""
+
+        # Estimate token count (rough approximation)
+        prompt_length = len(prompt)
+        estimated_tokens = prompt_length // 4  # ~1 token per 4 characters
+        logging.info(f"Prompt for section {section_display}, page {page}: length={prompt_length}, estimated tokens={estimated_tokens}")
+
+        if estimated_tokens > 128000:
+            logging.error(f"Prompt for section {section_display}, page {page} exceeds token limit: {estimated_tokens} tokens")
+            color_detected = "other"
+        else:
+            try:
+                response = client.chat.completions.create(
+                    model=AZURE_OPENAI_DEPLOYMENT,
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                    max_tokens=100
+                )
+                result = json.loads(response.choices[0].message.content)
+                color_detected = result.get("color_detected", "other")
+                logging.info(f"GPT-4o ink color detection for section {section_display}, page {page}: {color_detected}")
+            except Exception as e:
+                logging.error(f"Error detecting ink color for section {section_display}, page {page}: {str(e)}")
+                color_detected = "other"
+
+        signatures_with_colors.append({
+            "section": section,
+            "page": page,
+            "color_detected": color_detected,
+            "is_blue": color_detected == "blue"
+        })
+
+    return signatures_with_colors
 
 def validate_form_fields(fields: Dict, doc_result: AnalyzeResult) -> List[Dict]:
     """Validate required fields and signatures in the extracted form data using DI results."""
@@ -208,8 +357,8 @@ def validate_form_fields(fields: Dict, doc_result: AnalyzeResult) -> List[Dict]:
 
     return issues
 
-def analyze_signatures_with_gpt4o(fields: Dict, doc_result: AnalyzeResult, pdf_data: bytes, blob_name: str) -> tuple:
-    """Use Azure OpenAI GPT-4o to analyze signatures for ink color and compliance."""
+def analyze_signatures_with_gpt4o(fields: Dict, doc_result: AnalyzeResult, pdf_data: bytes, blob_name: str, blob_service_client: BlobServiceClient) -> tuple:
+    """Use Azure OpenAI GPT-4o to analyze signatures for compliance, with ink color detection in a separate call."""
     client = AzureOpenAI(
         azure_endpoint=AZURE_OPENAI_ENDPOINT,
         api_key=AZURE_OPENAI_KEY,
@@ -223,6 +372,7 @@ def analyze_signatures_with_gpt4o(fields: Dict, doc_result: AnalyzeResult, pdf_d
         "related_individuals": [{} for _ in range(3)]
     }
     signature_images = []
+    signature_field_mapping = {}  # To map sections to field names for issue reporting
     
     # Applicant data
     applicant_fields = [
@@ -248,10 +398,16 @@ def analyze_signatures_with_gpt4o(fields: Dict, doc_result: AnalyzeResult, pdf_d
                     "page": page,
                     "bounding_box": bounding_box
                 }
+                signature_field_mapping["applicant"] = field
                 if is_present and isinstance(bounding_box, list) and len(bounding_box) >= 8:
-                    img_base64 = extract_signature_image(pdf_data, page, bounding_box, field)
-                    if img_base64:
-                        signature_images.append({"section": "applicant", "image": img_base64, "page": page})
+                    result = extract_signature_image(pdf_data, page, bounding_box, field, blob_service_client, blob_name)
+                    if result:
+                        signature_images.append({
+                            "section": result["section"],
+                            "image": result["image"],
+                            "page": page
+                        })
+                        logging.info(f"Mapped field '{field}' to section 'applicant' for signature extraction")
                     else:
                         logging.warning(f"No valid signature image extracted for field '{field}' on page {page}")
                         extracted_data["applicant"]["signature"]["is_blue"] = None
@@ -277,19 +433,30 @@ def analyze_signatures_with_gpt4o(fields: Dict, doc_result: AnalyzeResult, pdf_d
                     age = calculate_age(value)
                     extracted_data["related_individuals"][i]["dob"] = {"value": value, "age": age}
                 elif key == "signature":
-                    is_present = fields[field].get("valueSignature") == "signed"
+                    # Check if the signature field is marked as signed
+                    signature_value = fields[field].get("valueSignature")
+                    logging.info(f"Processing signature field '{field}': valueSignature={signature_value}")
+                    is_present = signature_value == "signed"
                     bounding_region = fields[field].get("boundingRegions", [{}])[0]
                     page = bounding_region.get("pageNumber", 1)
                     bounding_box = bounding_region.get("polygon", [])
+                    # Always initialize the signature dictionary, even if not signed
                     extracted_data["related_individuals"][i]["signature"] = {
                         "present": is_present,
                         "page": page,
                         "bounding_box": bounding_box
                     }
+                    section_key = f"related_individual_{i}"
+                    signature_field_mapping[section_key] = field
                     if is_present and isinstance(bounding_box, list) and len(bounding_box) >= 8:
-                        img_base64 = extract_signature_image(pdf_data, page, bounding_box, field)
-                        if img_base64:
-                            signature_images.append({"section": f"related_individual_{i}", "image": img_base64, "page": page})
+                        result = extract_signature_image(pdf_data, page, bounding_box, field, blob_service_client, blob_name)
+                        if result:
+                            signature_images.append({
+                                "section": result["section"],
+                                "image": result["image"],
+                                "page": page
+                            })
+                            logging.info(f"Mapped field '{field}' to section '{section_key}' for signature extraction")
                         else:
                             logging.warning(f"No valid signature image extracted for field '{field}' on page {page}")
                             extracted_data["related_individuals"][i]["signature"]["is_blue"] = None
@@ -298,44 +465,70 @@ def analyze_signatures_with_gpt4o(fields: Dict, doc_result: AnalyzeResult, pdf_d
                         extracted_data["related_individuals"][i]["signature"]["is_blue"] = None
                 else:
                     extracted_data["related_individuals"][i][key] = {"value": fields[field].get("valueString", "")}
-    
-    # GPT-4o prompt
+            else:
+                logging.info(f"Field '{field}' not found in extracted fields")
+
+    # Step 1: Detect ink color with a separate GPT-4o call
+    signatures = detect_ink_color_with_gpt4o(client, signature_images)
+
+    # Step 2: Update extracted_data with ink color results
+    for sig in signatures:
+        section = sig["section"]
+        is_blue = sig["is_blue"]
+        if section == "applicant":
+            if "signature" in extracted_data["applicant"]:
+                extracted_data["applicant"]["signature"]["is_blue"] = is_blue
+            else:
+                logging.warning(f"Signature data missing for applicant section; cannot set is_blue")
+        elif "related_individual" in section:
+            try:
+                # Extract the section number (e.g., "2_1_related_individual" -> "2_1")
+                section_num = section.split("_related_individual")[0]  # "2_1"
+                minor_num = int(section_num.split("_")[1])  # "1" from "2_1"
+                idx = minor_num - 1  # Map 1->0, 2->1, 3->2
+                logging.info(f"Mapping section '{section}' to related_individuals index {idx}")
+                # Ensure idx is within bounds
+                if 0 <= idx < len(extracted_data["related_individuals"]):
+                    if "signature" not in extracted_data["related_individuals"][idx]:
+                        logging.warning(f"Signature data missing for related_individuals[{idx}]; initializing with is_blue")
+                        extracted_data["related_individuals"][idx]["signature"] = {"is_blue": is_blue}
+                    else:
+                        extracted_data["related_individuals"][idx]["signature"]["is_blue"] = is_blue
+                else:
+                    logging.error(f"Index {idx} out of bounds for related_individuals (length {len(extracted_data['related_individuals'])})")
+            except (IndexError, ValueError) as e:
+                logging.error(f"Error processing section '{section}' for ink color update: {str(e)}")
+        else:
+            logging.warning(f"Unknown section '{section}' in ink color detection results")
+
+    # Step 3: Compliance check with GPT-4o (without ink color detection)
     prompt = f"""
-    You are an expert in analyzing the IMM 5744 E consent form for ATIP compliance. Perform these tasks based solely on the provided input data and images, without making assumptions or inferring missing information:
+    You are an expert in analyzing the IMM 5744 E consent form for ATIP compliance. Perform these tasks based solely on the provided input data, without making assumptions or inferring missing information:
     **ATIP Consent Form Instructions**:
     - The form has three main sections:
       - Section 1: Designated Representative’s Information (requester details).
       - Section 2: Applicant’s Information.
       - Sections 2.1 to 2.3: Related Individual’s Information (up to 3 related individuals).
-    - Minors under 16 require both parents’ signatures in any shade of blue, or a court order.
-    - Signatures must be original, in any shade of blue (e.g., navy, light blue, turquoise), and include the date. No other colors (e.g., black, red, green) are allowed. No electronic signatures.
-    - Required fields (family_name, given_name, dob) must be present and non-empty for any section with data.
+    - Minors under 16 require both parents’ signatures, or a court order.
+    - Individuals 16 and older must have their own signature.
+    - Signatures must be original, include the date, and cannot be electronic.
+    - Required fields (family_name, given_name, dob) must be present and non-empty for any section with data (e.g., if any field in a section is filled, all required fields must be filled).
     **Tasks**:
-    1. **Ink Color Detection**:
-       - For each signature field, if 'present' is false or no valid image is provided, mark as missing ('is_blue': null).
-       - If 'present' is true and an image is provided, analyze the base64-encoded PNG image to determine if the ink is any shade of blue (e.g., navy, light blue, turquoise). Set 'is_blue': true if blue, false if not. Be cautious to avoid misidentifying blue ink as another color.
-       - Include page number and section (e.g., 'applicant', 'related_individual_0').
-    2. **Compliance Check**:
+    1. **Compliance Check**:
        - Verify these rules:
-         - Individuals 16+ must have their own signature in any shade of blue.
-         - Minors (<16) must have signatures from both parents or a court order, in any shade of blue.
-         - Signatures must be in blue ink and include a date.
+         - Individuals 16+ must have their own signature.
+         - Minors (<16) must have signatures from both parents or a court order.
+         - Signatures must include a date (check form_metadata.submission_date if available).
          - Required fields (family_name, given_name, dob) must be present and non-empty for any section with data.
        - For each issue, specify the page number, section name (e.g., '2. Applicant's Information'), and individual (e.g., 'Applicant Jason Jenna (age 1)').
-       - Provide clear action recommendations (e.g., 'Request missing signature', 'Verify ink color manually').
-       - Do not report ink color issues for missing signatures or signatures without valid images.
+       - Provide clear action recommendations (e.g., 'Request missing signature', 'Verify court order for minor').
        - Do not report issues about exceeding the limit of related individuals; focus only on field inputs and signatures.
+       - Do NOT report issues related to ink color; ink color has already been checked, and the provided 'is_blue' value in the input data should be used for reference only.
     **Input Data**:
     {json.dumps(extracted_data, indent=2)}
-    **Signature Images** (base64-encoded PNGs):
-    """
-    for sig in signature_images:
-        prompt += f"\n\nSection: {sig['section']}, Page: {sig['page']}\n![Signature](data:image/png;base64,{sig['image']})\n"
-    prompt += f"""
     **Output a JSON object with**:
     - 'form_id': '{blob_name}'
-    - 'signatures': List of objects, each with 'section' (e.g., 'applicant'), 'is_blue' (boolean or null), 'page' (integer).
-    - 'issues': List of objects with 'description' (specific, e.g., 'Signature not in blue ink for Applicant Jason Jenna (age 1) in 2. Applicant's Information'), 'field' (e.g., 'Signature'), 'page' (integer), and 'action' (e.g., 'Request signature in blue ink'). Exclude any issues about exceeding related individuals limit.
+    - 'issues': List of objects with 'description' (specific, e.g., 'Minor under 16 requires both parents’ signatures in 2. Applicant's Information'), 'field' (e.g., 'Signature'), 'page' (integer), and 'action' (e.g., 'Request both parents’ signatures'). Exclude any issues about exceeding related individuals limit or ink color.
     """
     
     try:
@@ -346,18 +539,48 @@ def analyze_signatures_with_gpt4o(fields: Dict, doc_result: AnalyzeResult, pdf_d
             max_tokens=1000
         )
         result = json.loads(response.choices[0].message.content)
-        logging.info(f"GPT-4o response: {json.dumps(result, indent=2)}")
+        logging.info(f"GPT-4o compliance check response: {json.dumps(result, indent=2)}")
         
         # Filter out issues related to exceeding related individuals limit
-        filtered_issues = [
+        compliance_issues = [
             issue for issue in result.get("issues", [])
             if "exceeded limit of related individuals" not in issue.get("description", "").lower()
         ]
-        result["issues"] = filtered_issues
-        return result.get("signatures", []), filtered_issues
     except Exception as e:
-        logging.error(f"Error analyzing signatures with GPT-4o: {str(e)}")
-        return [], [{"description": f"Failed to analyze signatures: {str(e)}", "field": "Signature Analysis", "page": 1, "action": "Flag for review"}]
+        logging.error(f"Error analyzing signatures with GPT-4o for compliance: {str(e)}")
+        compliance_issues = [{"description": f"Failed to analyze signatures: {str(e)}", "field": "Signature Analysis", "page": 1, "action": "Flag for review"}]
+
+    # Step 4: Add ink color issues for signatures that are present but not blue
+    ink_issues = []
+    for sig in signatures:
+        section = sig["section"]
+        is_blue = sig["is_blue"]
+        page = sig["page"]
+        field = signature_field_mapping.get(section, "Unknown Field")
+        section_name = "2. Applicant's Information" if section == "applicant" else f"{section.replace('_related_individual', '').replace('_', '.')} Related Individual’s Information"
+        
+        # Only add an issue if the signature is present (image exists) and not blue
+        if sig["color_detected"] != "other" and not is_blue:
+            ink_issues.append({
+                "description": f"Signature not in blue ink in {section_name}",
+                "field": field,
+                "page": page,
+                "action": "Request signature in blue ink"
+            })
+
+    # Combine signatures for output (remove color_detected to match original format)
+    signatures_output = [
+        {
+            "section": sig["section"],
+            "is_blue": sig["is_blue"],
+            "page": sig["page"]
+        }
+        for sig in signatures
+    ]
+
+    # Combine all issues
+    all_issues = compliance_issues + ink_issues
+    return signatures_output, all_issues
 
 def serialize_bounding_region(region: Optional[BoundingRegion]) -> Optional[Dict]:
     """Serialize a BoundingRegion object to a JSON-compatible dictionary."""
@@ -469,7 +692,7 @@ def process_atip_form(inputBlob: func.InputStream, jsonOutput: func.Out[str], re
         issues = validate_form_fields(fields, result)
 
         # Analyze signatures with GPT-4o
-        signatures, signature_issues = analyze_signatures_with_gpt4o(fields, result, pdf_data, inputBlob.name)
+        signatures, signature_issues = analyze_signatures_with_gpt4o(fields, result, pdf_data, inputBlob.name, blob_service_client)
         issues.extend(signature_issues)
 
         # Prepare report JSON
