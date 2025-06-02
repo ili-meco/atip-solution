@@ -133,13 +133,12 @@ def extract_signature_image(pdf_data: bytes, page_num: int, bounding_box: list, 
         # Save the PNG to form-signatures
         signature_blob_name = f"{blob_name.replace('form-pdfs/', '').replace('.pdf', '')}_{section}_page{page_num}.png"
         blob_client = blob_service_client.get_blob_client(container="form-signatures", blob=signature_blob_name)
-        blob_client.upload_blob(img_bytes_resized, overwrite=True)
-        logging.info(f"Saved signature image to form-signatures/{signature_blob_name}")
-
-        # Close the PDF document
-        pdf_document.close()
-        return {"image": img_base64, "section": section}
-
+        try:
+            logging.info(f"Uploading signature image to form-signatures/{signature_blob_name} ...")
+            blob_client.upload_blob(img_bytes_resized, overwrite=True)
+            logging.info(f"Successfully uploaded signature image to form-signatures/{signature_blob_name}")
+        except Exception as upload_exc:
+            logging.error(f"Failed to upload signature image to form-signatures/{signature_blob_name}: {str(upload_exc)}")
     except Exception as e:
         logging.error(f"Failed to extract signature image for field '{field_name}' on page {page_num}: {str(e)}")
         if 'pdf_document' in locals():
@@ -388,17 +387,21 @@ def analyze_signatures_with_gpt4o(fields: Dict, doc_result: AnalyzeResult, pdf_d
                 age = calculate_age(value)
                 extracted_data["applicant"]["dob"] = {"value": value, "age": age}
             elif key == "signature":
-                is_present = fields[field].get("valueSignature") == "signed"
+                signature_value = fields[field].get("valueSignature")
+                is_present = signature_value == "signed"
                 bounding_region = fields[field].get("boundingRegions", [{}])[0]
                 page = bounding_region.get("pageNumber", 1)
                 bounding_box = bounding_region.get("polygon", [])
+                logging.info(f"[Applicant] Signature field '{field}': valueSignature={signature_value}, page={page}, bounding_box={bounding_box}")
                 extracted_data["applicant"]["signature"] = {
                     "present": is_present,
                     "page": page,
                     "bounding_box": bounding_box
                 }
                 signature_field_mapping["applicant"] = field
-                if is_present and isinstance(bounding_box, list) and len(bounding_box) >= 8:
+                # Always attempt extraction, even if not signed
+                if isinstance(bounding_box, list) and len(bounding_box) >= 8:
+                    logging.info(f"[Applicant] Attempting to extract signature image for field '{field}' on page {page}")
                     result = extract_signature_image(pdf_data, page, bounding_box, field, blob_service_client, blob_name)
                     if result:
                         signature_images.append({
@@ -406,12 +409,12 @@ def analyze_signatures_with_gpt4o(fields: Dict, doc_result: AnalyzeResult, pdf_d
                             "image": result["image"],
                             "page": page
                         })
-                        logging.info(f"Mapped field '{field}' to section 'applicant' for signature extraction")
+                        logging.info(f"[Applicant] Signature image extracted and appended for field '{field}' on page {page}")
                     else:
-                        logging.warning(f"No valid signature image extracted for field '{field}' on page {page}")
+                        logging.warning(f"[Applicant] No valid signature image extracted for field '{field}' on page {page}")
                         extracted_data["applicant"]["signature"]["is_blue"] = None
                 else:
-                    logging.warning(f"Invalid or missing bounding box for field '{field}' on page {page}: {bounding_box}")
+                    logging.warning(f"[Applicant] Invalid or missing bounding box for field '{field}' on page {page}: {bounding_box}")
                     extracted_data["applicant"]["signature"]["is_blue"] = None
             else:
                 extracted_data["applicant"][key] = {"value": fields[field].get("valueString", "")}
@@ -432,14 +435,12 @@ def analyze_signatures_with_gpt4o(fields: Dict, doc_result: AnalyzeResult, pdf_d
                     age = calculate_age(value)
                     extracted_data["related_individuals"][i]["dob"] = {"value": value, "age": age}
                 elif key == "signature":
-                    # Check if the signature field is marked as signed
                     signature_value = fields[field].get("valueSignature")
-                    logging.info(f"Processing signature field '{field}': valueSignature={signature_value}")
                     is_present = signature_value == "signed"
                     bounding_region = fields[field].get("boundingRegions", [{}])[0]
                     page = bounding_region.get("pageNumber", 1)
                     bounding_box = bounding_region.get("polygon", [])
-                    # Always initialize the signature dictionary, even if not signed
+                    logging.info(f"[Related {section}] Signature field '{field}': valueSignature={signature_value}, page={page}, bounding_box={bounding_box}")
                     extracted_data["related_individuals"][i]["signature"] = {
                         "present": is_present,
                         "page": page,
@@ -447,7 +448,9 @@ def analyze_signatures_with_gpt4o(fields: Dict, doc_result: AnalyzeResult, pdf_d
                     }
                     section_key = f"related_individual_{i}"
                     signature_field_mapping[section_key] = field
-                    if is_present and isinstance(bounding_box, list) and len(bounding_box) >= 8:
+                    # Always attempt extraction, even if not signed
+                    if isinstance(bounding_box, list) and len(bounding_box) >= 8:
+                        logging.info(f"[Related {section}] Attempting to extract signature image for field '{field}' on page {page}")
                         result = extract_signature_image(pdf_data, page, bounding_box, field, blob_service_client, blob_name)
                         if result:
                             signature_images.append({
@@ -455,17 +458,17 @@ def analyze_signatures_with_gpt4o(fields: Dict, doc_result: AnalyzeResult, pdf_d
                                 "image": result["image"],
                                 "page": page
                             })
-                            logging.info(f"Mapped field '{field}' to section '{section_key}' for signature extraction")
+                            logging.info(f"[Related {section}] Signature image extracted and appended for field '{field}' on page {page}")
                         else:
-                            logging.warning(f"No valid signature image extracted for field '{field}' on page {page}")
+                            logging.warning(f"[Related {section}] No valid signature image extracted for field '{field}' on page {page}")
                             extracted_data["related_individuals"][i]["signature"]["is_blue"] = None
                     else:
-                        logging.warning(f"Invalid or missing bounding box for field '{field}' on page {page}: {bounding_box}")
+                        logging.warning(f"[Related {section}] Invalid or missing bounding box for field '{field}' on page {page}: {bounding_box}")
                         extracted_data["related_individuals"][i]["signature"]["is_blue"] = None
                 else:
                     extracted_data["related_individuals"][i][key] = {"value": fields[field].get("valueString", "")}
             else:
-                logging.info(f"Field '{field}' not found in extracted fields")
+                logging.info(f"[Related {section}] Field '{field}' not found in extracted fields")
 
     # Step 1: Detect ink color with a separate GPT-4o call
     signatures = detect_ink_color_with_gpt4o(client, signature_images)
