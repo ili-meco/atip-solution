@@ -135,13 +135,31 @@ export default function FormValidator() {
                 field: "Document", 
                 reason: "Successfully processed and uploaded to storage."
               });
-              
-              // Add signatures as valid fields if they exist
+                // Add signatures as valid fields if they exist
               if (report.signatures && report.signatures.length > 0) {
                 report.signatures.forEach((signature, index) => {
+                  // Create signature information with section and page
+                  let section = signature.section || "Unknown";
+                  
+                  // Format section nicely for display
+                  if (section === "applicant") {
+                    section = "Applicant";
+                  } else if (section.includes("related_individual")) {
+                    // Format "2_1_related_individual" to "Related Individual 2.1"
+                    const sectionNum = section.split("_related_individual")[0].replace("_", ".");
+                    section = `Related Individual ${sectionNum}`;
+                  }
+                  
+                  // Include color information if available
+                  const colorInfo = signature.color_detected 
+                    ? `Color detected: ${signature.color_detected}${signature.is_blue ? ' ✓' : ' ✗'}` 
+                    : signature.is_blue !== undefined 
+                      ? `Blue ink: ${signature.is_blue ? 'Yes ✓' : 'No ✗'}`
+                      : '';
+                  
                   validFields.push({
-                    field: `Signature ${index + 1}`,
-                    reason: `Valid signature found: ${signature}`
+                    field: `Signature - ${section}`,
+                    reason: `Found on page ${signature.page}. ${colorInfo}`
                   });
                 });
               }
