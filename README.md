@@ -124,6 +124,9 @@ The application should now be running with:
 The solution extracts signatures from the form and:
 - Saves each signature as a PNG image in the `form-signatures` container
 - Analyzes ink color (blue ink is required for compliance)
+  - Detects specific colors (blue, black, red, other) using AI vision capabilities
+  - Reports the detected color in the validation results
+  - Flags non-blue signatures as issues requiring correction
 - Verifies that all required signatures are present
 - Checks if signatures from both parents are present for minors under 16
 

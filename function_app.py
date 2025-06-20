@@ -128,15 +128,19 @@ def extract_signature_image(pdf_data: bytes, page_num: int, bounding_box: list, 
         elif "Related Individual's Information" in field_name:
             section = field_name.split(" ")[0].replace(".", "_") + "_related_individual"
         else:
-            section = "unknown"
-
-        # Save the PNG to form-signatures
+            section = "unknown"        # Save the PNG to form-signatures
         signature_blob_name = f"{blob_name.replace('form-pdfs/', '').replace('.pdf', '')}_{section}_page{page_num}.png"
         blob_client = blob_service_client.get_blob_client(container="form-signatures", blob=signature_blob_name)
         try:
             logging.info(f"Uploading signature image to form-signatures/{signature_blob_name} ...")
             blob_client.upload_blob(img_bytes_resized, overwrite=True)
             logging.info(f"Successfully uploaded signature image to form-signatures/{signature_blob_name}")
+            
+            # Return image base64 and section for analysis
+            return {
+                "section": section, 
+                "image": img_base64
+            }
         except Exception as upload_exc:
             logging.error(f"Failed to upload signature image to form-signatures/{signature_blob_name}: {str(upload_exc)}")
     except Exception as e:
@@ -568,14 +572,13 @@ def analyze_signatures_with_gpt4o(fields: Dict, doc_result: AnalyzeResult, pdf_d
                 "field": field,
                 "page": page,
                 "action": "Request signature in blue ink"
-            })
-
-    # Combine signatures for output (remove color_detected to match original format)
+            })    # Combine signatures for output (include color_detected in the output)
     signatures_output = [
         {
             "section": sig["section"],
             "is_blue": sig["is_blue"],
-            "page": sig["page"]
+            "page": sig["page"],
+            "color_detected": sig["color_detected"]
         }
         for sig in signatures
     ]
