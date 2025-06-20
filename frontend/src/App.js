@@ -230,38 +230,40 @@ export default function FormValidator() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-4xl mx-auto px-4">
-        <div className="text-center mb-8">          <h1 className="text-3xl font-bold text-gray-900 mb-2">
+    <div className="min-h-screen bg-gray-50 py-16">
+      <div className="max-w-6xl mx-auto px-8">
+        <div className="text-center mb-16">
+          <h1 className="text-5xl font-extrabold text-gray-900 mb-4">
             {CONFIG.formTitle}
           </h1>
-          <p className="text-gray-600">
+          <p className="text-2xl text-gray-700">
             {CONFIG.validatorDescription}
           </p>
-          <p className="text-xs text-gray-500 mt-2 italic">
+          <p className="text-base text-gray-500 mt-4 italic">
             Note: AI validation is a helpful tool, but all results should be verified by a human reviewer.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
           {/* Form Input Section */}
-          <div className="bg-white rounded-lg shadow p-6 flex flex-col">
-            <div className="mb-4">
-              <h2 className="text-xl font-semibold text-gray-900">
+          <div className="bg-white rounded-2xl shadow-xl p-12 flex flex-col">
+            <div className="mb-8">
+              <h2 className="text-3xl font-bold text-gray-900">
                 Upload Form Data
               </h2>
             </div>
             <form
               onSubmit={handleSubmit}
-              className="space-y-4 flex-1 flex flex-col"
+              className="space-y-8 flex-1 flex flex-col"
             >
-              <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-gray-400 transition-colors">
-                <div className="space-y-4">
+              <div className="border-4 border-dashed border-gray-300 rounded-2xl p-12 text-center hover:border-gray-400 transition-colors">
+                <div className="space-y-8">
                   <div>
                     <label htmlFor="file" className="cursor-pointer">
-                      <span className="text-lg font-medium text-gray-900">
+                      <span className="text-2xl font-semibold text-gray-900">
                         Upload your form data
-                      </span>                      <p className="text-sm text-gray-500 mt-1">
+                      </span>
+                      <p className="text-lg text-gray-500 mt-2">
                         {CONFIG.documentTypes.supportedFormats.join(", ")} files supported
                       </p>
                     </label>
@@ -274,11 +276,11 @@ export default function FormValidator() {
                       required
                       onChange={handleFileChange}
                     />
-                    {file && <p className="mt-2 text-green-600">{file.name}</p>}
+                    {file && <p className="mt-4 text-green-700 text-lg font-medium">{file.name}</p>}
                   </div>
                   <button
                     type="button"
-                    className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition"
+                    className="mt-4 px-8 py-4 bg-blue-600 text-white rounded-xl text-xl font-bold hover:bg-blue-700 transition"
                     onClick={() => document.getElementById("file").click()}
                   >
                     Upload
@@ -286,7 +288,8 @@ export default function FormValidator() {
                 </div>
               </div>
 
-              <div className="text-xs text-gray-500 space-y-1">                <p>
+              <div className="text-lg text-gray-500 space-y-2">
+                <p>
                   <strong>Supported formats:</strong>
                 </p>
                 {CONFIG.documentTypes.supportedFormats.map((format, index) => (
@@ -297,7 +300,7 @@ export default function FormValidator() {
               <button
                 type="submit"
                 disabled={pending}
-                className="w-full bg-black text-white py-2 rounded-lg font-semibold hover:bg-gray-900 transition"
+                className="w-full bg-black text-white py-4 rounded-xl text-2xl font-bold hover:bg-gray-900 transition"
               >
                 {pending ? "Validating File..." : "Validate Form Data"}
               </button>
@@ -305,45 +308,45 @@ export default function FormValidator() {
           </div>
 
           {/* Results Section */}
-          <div className="bg-white rounded-lg shadow p-6 flex flex-col">
-            <div className="mb-4">
-              <h2 className="text-xl font-semibold text-gray-900">
+          <div className="bg-white rounded-2xl shadow-xl p-12 flex flex-col">
+            <div className="mb-8">
+              <h2 className="text-3xl font-bold text-gray-900">
                 Validation Results
               </h2>
             </div>
             <div className="flex-1">
               {state.isValid === null && !pending && (
-                <div className="text-center text-gray-500 py-8">
-                  <AlertTriangle className="mx-auto h-12 w-12 mb-4 opacity-50" />
-                  <p>Submit the form to see AI validation results</p>
+                <div className="text-center text-gray-500 py-16">
+                  <AlertTriangle className="mx-auto h-20 w-20 mb-8 opacity-50" />
+                  <p className="text-2xl">Submit the form to see AI validation results</p>
                 </div>
               )}
 
               {pending && (
-                <div className="text-center text-blue-600 py-8">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                  <p>AI is analyzing your form...</p>
+                <div className="text-center text-blue-600 py-16">
+                  <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-8"></div>
+                  <p className="text-2xl">AI is analyzing your form...</p>
                 </div>
               )}
 
               {state.isValid !== null && !pending && (
-                <div className="space-y-6">
+                <div className="space-y-10">
                   {/* Overall Status */}
                   <div
                     className={`border ${
                       state.isValid
                         ? "border-green-200 bg-green-50"
                         : "border-red-200 bg-red-50"
-                    } rounded-lg p-4`}
+                    } rounded-xl p-8`}
                   >
                     <div className="flex items-center">
                       {state.isValid ? (
-                        <CheckCircle className="h-5 w-5 text-green-600 mr-2" />
+                        <CheckCircle className="h-8 w-8 text-green-600 mr-4" />
                       ) : (
-                        <XCircle className="h-5 w-5 text-red-600 mr-2" />
+                        <XCircle className="h-8 w-8 text-red-600 mr-4" />
                       )}
                       <span
-                        className={`text-lg font-medium ${
+                        className={`text-2xl font-bold ${
                           state.isValid
                             ? "text-green-800"
                             : "text-red-800"
@@ -355,7 +358,7 @@ export default function FormValidator() {
                       </span>
                     </div>
                     {!state.isValid && state.invalidFields.length > 0 && (
-                      <p className="mt-2 text-sm text-red-700">
+                      <p className="mt-4 text-xl text-red-700">
                         {state.invalidFields.length} issue{state.invalidFields.length !== 1 ? 's' : ''} found that require attention
                       </p>
                     )}
@@ -364,17 +367,17 @@ export default function FormValidator() {
                   {/* AI Recommendations */}
                   {state.recommendations.length > 0 && (
                     <div>
-                      <h3 className="text-lg font-semibold text-blue-700 mb-3 flex items-center">
-                        <AlertTriangle className="h-5 w-5 mr-2" />
+                      <h3 className="text-2xl font-bold text-blue-700 mb-4 flex items-center">
+                        <AlertTriangle className="h-8 w-8 mr-4" />
                         Recommendations
                       </h3>
-                      <div className="space-y-2">
+                      <div className="space-y-4">
                         {state.recommendations.map((recommendation, index) => (
                           <div
                             key={index}
-                            className="bg-blue-50 border border-blue-200 rounded-lg p-3"
+                            className="bg-blue-50 border border-blue-200 rounded-xl p-6"
                           >
-                            <p className="text-blue-800">{recommendation}</p>
+                            <p className="text-blue-800 text-lg">{recommendation}</p>
                           </div>
                         ))}
                       </div>
@@ -382,18 +385,18 @@ export default function FormValidator() {
                   )}                  {/* Required Corrections - Invalid Fields */}
                   {state.invalidFields.length > 0 && (
                     <div>
-                      <h3 className="text-lg font-semibold text-red-700 mb-3 flex items-center">
-                        <XCircle className="h-5 w-5 mr-2" />
+                      <h3 className="text-2xl font-bold text-red-700 mb-4 flex items-center">
+                        <XCircle className="h-8 w-8 mr-4" />
                         Required Corrections
                       </h3>
-                      <div className="space-y-2">
+                      <div className="space-y-4">
                         {state.invalidFields.map((field, index) => (
                           <div
                             key={index}
-                            className="bg-red-50 border border-red-200 rounded-lg p-3"
+                            className="bg-red-50 border border-red-200 rounded-xl p-6"
                           >
-                            <p className="text-red-800 font-medium">{field.field}</p>
-                            <p className="text-red-600 text-sm mt-1">{field.reason}</p>
+                            <p className="text-red-800 font-bold text-lg">{field.field}</p>
+                            <p className="text-red-600 text-base mt-2">{field.reason}</p>
                           </div>
                         ))}
                       </div>
@@ -403,18 +406,18 @@ export default function FormValidator() {
                   {/* Valid Fields */}
                   {state.validFields.length > 0 && (
                     <div>
-                      <h3 className="text-lg font-semibold text-green-700 mb-3 flex items-center">
-                        <CheckCircle className="h-5 w-5 mr-2" />
+                      <h3 className="text-2xl font-bold text-green-700 mb-4 flex items-center">
+                        <CheckCircle className="h-8 w-8 mr-4" />
                         Valid Fields
                       </h3>
-                      <div className="space-y-2">
+                      <div className="space-y-4">
                         {state.validFields.map((field, index) => (
                           <div
                             key={index}
-                            className="bg-green-50 border border-green-200 rounded-lg p-3"
+                            className="bg-green-50 border border-green-200 rounded-xl p-6"
                           >
-                            <p className="text-green-800 font-medium">{field.field}</p>
-                            <p className="text-green-600 text-sm mt-1">{field.reason}</p>
+                            <p className="text-green-800 font-bold text-lg">{field.field}</p>
+                            <p className="text-green-600 text-base mt-2">{field.reason}</p>
                           </div>
                         ))}
                       </div>
