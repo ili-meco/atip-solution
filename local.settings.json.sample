@@ -1,0 +1,12 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "DefaultEndpointsProtocol=https;AccountName=youraccount;AccountKey=yourkey;EndpointSuffix=core.windows.net",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AZURE_STORAGE_CONNECTION_STRING": "DefaultEndpointsProtocol=https;AccountName=youraccount;AccountKey=yourkey;EndpointSuffix=core.windows.net",
+    "DOCUMENT_INTELLIGENCE_ENDPOINT": "https://yourdocintelligence.cognitiveservices.azure.com/",
+    "DOCUMENT_INTELLIGENCE_KEY": "your-document-intelligence-key",
+    "AZURE_OPENAI_KEY": "your-openai-key",
+    "AZURE_OPENAI_ENDPOINT": "https://youropenai.openai.azure.com/"
+  }
+}
