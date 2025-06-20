@@ -5,20 +5,24 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from azure.storage.blob import BlobServiceClient, ContainerClient
 from starlette.responses import JSONResponse
-from dotenv import load_dotenv 
+from dotenv import load_dotenv
+
+# Import configuration settings
+from config import (
+    AZURE_STORAGE_CONNECTION_STRING, 
+    DOCUMENTS_CONTAINER,
+    REPORT_CONTAINER, 
+    ALLOWED_FILE_EXTENSIONS,
+    CORS_ORIGINS
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load environment variables from .env file
-load_dotenv()
-
-AZURE_STORAGE_CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING") 
+# Validate configuration
 if not AZURE_STORAGE_CONNECTION_STRING:
     raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING is not set. Please check your .env file.")
-PDF_CONTAINER = "form-pdfs"
-REPORT_CONTAINER = "form-reports"
 
 app = FastAPI()
 
@@ -47,7 +51,7 @@ def ensure_container_exists(container_name):
 @app.on_event("startup")
 def startup_event():
     logger.info("Ensuring blob containers exist...")
-    ensure_container_exists(PDF_CONTAINER)
+    ensure_container_exists(DOCUMENTS_CONTAINER)
     ensure_container_exists(REPORT_CONTAINER)
     logger.info("Startup completed.")
 
@@ -55,16 +59,19 @@ def startup_event():
 async def upload_file(file: UploadFile = File(...)):
     logger.info(f"Received upload request for file: {file.filename}")
     try:
-        if not file.filename.endswith(".pdf"):
-            logger.warning(f"File {file.filename} rejected: not a PDF")
-            raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
+        # Check if file has allowed extension
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in ALLOWED_FILE_EXTENSIONS:
+            allowed_formats = ", ".join(ALLOWED_FILE_EXTENSIONS)
+            logger.warning(f"File {file.filename} rejected: invalid format. Allowed formats: {allowed_formats}")
+            raise HTTPException(status_code=400, detail=f"Only {allowed_formats} files are allowed.")
         
         # Ensure container exists
-        ensure_container_exists(PDF_CONTAINER)
+        ensure_container_exists(DOCUMENTS_CONTAINER)
         
         try:
             # Get blob client and upload
-            blob_client = blob_service_client.get_blob_client(container=PDF_CONTAINER, blob=file.filename)
+            blob_client = blob_service_client.get_blob_client(container=DOCUMENTS_CONTAINER, blob=file.filename)
             logger.info(f"Reading content from uploaded file: {file.filename}")
             content = await file.read()
             logger.info(f"Uploading {len(content)} bytes to blob storage")

@@ -2,6 +2,21 @@ import React, { useState } from "react";
 import { CheckCircle, XCircle, AlertTriangle } from "lucide-react";
 import "tailwindcss/tailwind.css";
 
+// Configuration options that can be customized per implementation
+const CONFIG = {
+  apiEndpoints: {
+    upload: "http://localhost:8080/upload",
+    status: "http://localhost:8080/status"
+  },
+  documentTypes: {
+    supportedFormats: [".pdf"],
+    acceptString: ".pdf"
+  },
+  formTitle: "AI Form Validator",
+  validatorDescription: "Submit your form data and get AI-powered validation recommendations",
+  pollingIntervalMs: 2000
+};
+
 const initialState = {
   isValid: null,
   recommendations: [],
@@ -18,7 +33,6 @@ export default function FormValidator() {
     setFile(e.target.files[0]);
     setState(initialState);
   };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!file) return;
@@ -32,9 +46,9 @@ export default function FormValidator() {
     console.log("FormData prepared with file");
     
     try {
-      // Upload to blob storage using the /upload endpoint
-      console.log("Sending POST request to /upload endpoint");
-      const res = await fetch("http://localhost:8080/upload", {
+      // Upload to blob storage using the configured upload endpoint
+      console.log(`Sending POST request to ${CONFIG.apiEndpoints.upload} endpoint`);
+      const res = await fetch(CONFIG.apiEndpoints.upload, {
         method: "POST",
         body: formData,
       });
@@ -78,11 +92,12 @@ export default function FormValidator() {
       setPending(false);
     }
   };
-
   // Poll for processing status
   const checkProcessingStatus = async (filename) => {
     try {
-      const res = await fetch(`http://localhost:8080/status/${filename}`);
+      const statusUrl = `${CONFIG.apiEndpoints.status}/${filename}`;
+      console.log(`Checking status at: ${statusUrl}`);
+      const res = await fetch(statusUrl);
       const data = await res.json();
       console.log("Status check response:", data);
 
@@ -178,11 +193,10 @@ export default function FormValidator() {
           validFields: [{ field: "Document", reason: "Successfully uploaded to storage." }],
           invalidFields: []
         });
-        setPending(false);
-      } else {
-        // If still processing, check again after 2 seconds
-        console.log("File still processing, checking again in 2 seconds");
-        setTimeout(() => checkProcessingStatus(filename), 2000);
+        setPending(false);      } else {
+        // If still processing, check again after the configured interval
+        console.log(`File still processing, checking again in ${CONFIG.pollingIntervalMs}ms`);
+        setTimeout(() => checkProcessingStatus(filename), CONFIG.pollingIntervalMs);
       }
     } catch (error) {
       console.error("Error checking processing status:", error);
@@ -200,12 +214,11 @@ export default function FormValidator() {
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-4xl mx-auto px-4">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            AI Form Validator
+        <div className="text-center mb-8">          <h1 className="text-3xl font-bold text-gray-900 mb-2">
+            {CONFIG.formTitle}
           </h1>
           <p className="text-gray-600">
-            Submit your form data and get AI-powered validation recommendations
+            {CONFIG.validatorDescription}
           </p>
           <p className="text-xs text-gray-500 mt-2 italic">
             Note: AI validation is a helpful tool, but all results should be verified by a human reviewer.
@@ -230,16 +243,15 @@ export default function FormValidator() {
                     <label htmlFor="file" className="cursor-pointer">
                       <span className="text-lg font-medium text-gray-900">
                         Upload your form data
-                      </span>
-                      <p className="text-sm text-gray-500 mt-1">
-                        PDF files supported
+                      </span>                      <p className="text-sm text-gray-500 mt-1">
+                        {CONFIG.documentTypes.supportedFormats.join(", ")} files supported
                       </p>
                     </label>
                     <input
                       id="file"
                       name="file"
                       type="file"
-                      accept=".pdf"
+                      accept={CONFIG.documentTypes.acceptString}
                       className="hidden"
                       required
                       onChange={handleFileChange}
@@ -256,11 +268,12 @@ export default function FormValidator() {
                 </div>
               </div>
 
-              <div className="text-xs text-gray-500 space-y-1">
-                <p>
+              <div className="text-xs text-gray-500 space-y-1">                <p>
                   <strong>Supported formats:</strong>
                 </p>
-                <p>• PDF</p>
+                {CONFIG.documentTypes.supportedFormats.map((format, index) => (
+                  <p key={index}>• {format.replace('.', '').toUpperCase()}</p>
+                ))}
               </div>
 
               <button

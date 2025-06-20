@@ -1,15 +1,15 @@
-# ATIP Solution: IMM 5744 Consent Form Processing
+# AI Document Validator Framework
 
-This project contains an Azure Function to process IMM 5744 consent forms for ATIP compliance. It extracts data from PDFs using Azure Document Intelligence, extracts signature images using PyMuPDF, and analyzes compliance using Azure OpenAI's GPT-4o model.
+This reusable framework provides an end-to-end solution for document validation with AI capabilities. Originally developed for IMM 5744 consent form processing for ATIP compliance, it has been generalized for use with any document type requiring validation and analysis. The system extracts data from documents using Azure Document Intelligence, processes images (like signatures) with PyMuPDF, and analyzes compliance using Azure OpenAI's GPT-4o model.
 
 ## Features
-- Triggers on PDF uploads to an Azure Blob Storage container (`form-pdfs`).
-- Uses a custom Document Intelligence model to extract form data.
-- Extracts signature images and analyzes ink color (must be blue) and compliance rules.
-- Saves signature snippets as PNG images to `form-signatures` container for visual verification.
-- Outputs extracted data to `form-json` and compliance reports to `form-reports`.
-- React frontend for validating and submitting PDF forms.
-- Real-time validation results display showing issues and recommendations.
+- **Configurable Document Handling**: Process any document type with customizable validation rules.
+- **Azure Integration**: Triggers on document uploads to Azure Blob Storage with configurable container names.
+- **AI-Powered Analysis**: Uses Azure Document Intelligence with customizable models for data extraction.
+- **Image Processing**: Extracts images (like signatures) from documents for further analysis.
+- **Customizable Validation**: Flexible validation rules using Azure OpenAI that can be adapted for any compliance requirements.
+- **Modern UI**: React frontend with Tailwind CSS for an attractive, responsive user experience.
+- **Real-time Feedback**: Live status updates and detailed validation reports with configurable polling intervals.
 
 ## Project Structure
 ```
@@ -133,4 +133,54 @@ The solution validates IMM 5744 consent forms against the following rules:
 - Signatures must be in blue ink.
 - Date formats must be valid (YYYY-MM-DD).
 - Minors under 16 require both parents' signatures or a court order.
+
+## Customizing for Your Use Case
+
+This solution has been designed with reusability in mind. Here's how to customize it for your specific document processing needs:
+
+### Frontend Configuration
+
+Modify the `CONFIG` object in `frontend/src/App.js` to customize:
+
+```javascript
+const CONFIG = {
+  apiEndpoints: {
+    upload: "http://yourapi.com/upload",   // Your backend API endpoint for uploading
+    status: "http://yourapi.com/status"    // Your backend API endpoint for status checks
+  },
+  documentTypes: {
+    supportedFormats: [".pdf", ".docx"],   // Add your supported file formats
+    acceptString: ".pdf,.docx"             // Update file input accept attribute
+  },
+  formTitle: "Document Validator",         // Your custom title
+  validatorDescription: "Your custom description", // Custom description
+  pollingIntervalMs: 2000                  // Status check interval in milliseconds
+};
+```
+
+### Azure Function Customization
+
+1. **Document Model**: Replace the Document Intelligence model name in `function_app.py` with your trained model.
+
+2. **Processing Logic**: Modify the document processing logic in `function_app.py` to extract the specific data points relevant to your documents.
+
+3. **Validation Rules**: Update the validation rules in the prompt sent to Azure OpenAI to match your document compliance requirements.
+
+### Backend API Customization
+
+1. **Container Names**: Change the blob container names in `backend/main.py` to match your storage structure.
+
+2. **Response Format**: Adjust the response format in the `/status/{filename}` endpoint to include fields specific to your validation requirements.
+
+### Adapting for Different Document Types
+
+To adapt this framework for different document types:
+
+1. Train a custom Document Intelligence model on your specific document type.
+
+2. Update the field extraction logic in `function_app.py`.
+
+3. Modify the Azure OpenAI prompt to include relevant validation criteria for your document type.
+
+4. Update the frontend display logic to show validation results appropriate for your document type.
 
